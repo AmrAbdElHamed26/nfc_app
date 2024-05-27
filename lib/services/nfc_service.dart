@@ -1,124 +1,89 @@
-import 'dart:async';
-
+import 'package:flutter/cupertino.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter_nfc_kit/flutter_nfc_kit.dart';
 import 'package:ndef/ndef.dart' as ndef;
+import 'package:nfc/app_constants.dart';
 
-abstract class BaseNfcReader {
-  Future<void> readNfcCard() ;
+abstract class BaseNFCServices {
+  Future<dynamic> readNFCCard();
 
+  Future<dynamic> writeTextData(String data);
+
+  Future<dynamic> writeUriData(String url);
 }
-class NfcReader {
-  String? _id;
-  String _result = "empty";
 
-  // Function to read NFC card
-  Future<void> readNfcCard() async {
-    try {
-      NFCTag tag = await FlutterNfcKit.poll();
+class NFCServices extends BaseNFCServices {
+  NFCServices({required this.context});
 
-      // Extract ID
-      _id = tag.id;
+  final BuildContext context;
 
-      // Handle different NFC tag types or standards
-      if (tag.standard == "ISO 14443-4 (Type B)") {
-        String result1 = await FlutterNfcKit.transceive("00B0950000");
-        String result2 =
-        await FlutterNfcKit.transceive("00A4040009A00000000386980701");
-        _result = '1: $result1\n2: $result2\n';
-      } else if (tag.type == NFCTagType.iso18092) {
-        String result1 = await FlutterNfcKit.transceive("060080080100");
-        _result = '1: $result1\n';
-      } else if (tag.ndefAvailable ?? false) {
-        var ndefRecords = await FlutterNfcKit.readNDEFRecords();
-        var ndefString = '';
-        for (int i = 0; i < ndefRecords.length; i++) {
-          ndefString += '${i + 1}: ${ndefRecords[i]}\n';
-        }
-        _result = ndefString;
-      } else if (tag.type == NFCTagType.webusb) {
-        var r = await FlutterNfcKit.transceive("00A4040006D27600012401");
+  @override
+  Future<bool> _NFCAvailability() async {
+    var availability = await FlutterNfcKit.nfcAvailability;
 
+    if (NFCAvailability.not_supported == availability) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text("NFC not supported"),
+      ));
+    } else if (NFCAvailability.disabled == availability) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text("open NFC service"),
+      ));
+    }
+
+    NFCTag tag = await FlutterNfcKit.poll();
+    return tag.ndefAvailable ?? false;
+  }
+
+  @override
+  Future<dynamic> readNFCCard() async {
+    if (await _NFCAvailability()) {
+      var ndefRecords = await FlutterNfcKit.readNDEFRecords();
+      if (ndefRecords[0] is ndef.TextRecord) {
+        return (ndefRecords[0] as ndef.TextRecord).text ??
+            AppConstants.errorNFC;
+      } else if (ndefRecords[0] is ndef.UriRecord) {
+        return (ndefRecords[0] as ndef.UriRecord).uriString ??
+            AppConstants.errorNFC;
       }
-
-      // Pretend that we are working
-      await FlutterNfcKit.finish(iosAlertMessage: "Finished!");
-    } catch (e) {
-      _id = null;
-      _result = 'error';
-    }
-
-
-  }
-
-  // Getter for the last read NFC tag ID
-  String? get lastReadId => _id;
-
-  // Getter for the result of the last NFC reading operation
-  String? get lastResult => _result;
-
-  String extractTextData() {
-    if(_result.isEmpty)return "none";
-
-    int textIndex = _result.indexOf("uri=");
-
-
-    if (textIndex != -1) {
-      String extractedText = _result.substring(textIndex + 5).trim();
-      return extractedText;
     } else {
-      return "none";
+      return AppConstants.errorNFC;
     }
   }
 
-  Future<void> writeData(String data) async {
+  @override
+  Future writeTextData(String data) async {
     try {
-      NFCTag tag = await FlutterNfcKit.poll();
-
-      if (tag.ndefAvailable ?? false) {
+      if (await _NFCAvailability()) {
         ndef.TextRecord newRecord = ndef.TextRecord(
-          encoding: ndef.TextEncoding.values[0],
+          encoding: ndef.TextEncoding.values[1],
+          // [TextEncoding.UTF8, TextEncoding.UTF16]
           language: 'en',
           text: data,
         );
 
         await FlutterNfcKit.writeNDEFRecords([newRecord]);
 
-        _result = 'Write Successful';
+        return AppConstants.writingUsingNFCSuccessfully;
       } else {
-        _result = 'error: NDEF not supported';
+        return AppConstants.NFCNotSupported;
       }
     } catch (e) {
-      _result = 'error: $e';
-    } finally {
-      await FlutterNfcKit.finish();
-    }
-
-  }
-
-  Future<void> writeUri(String data) async {
-    try {
-      NFCTag tag = await FlutterNfcKit.poll();
-
-      if (tag.ndefAvailable ?? false) {
-        ndef.UriRecord newRecord = ndef.UriRecord(
-          prefix:'https://' ,
-          content:data ,
-        );
-
-        await FlutterNfcKit.writeNDEFRecords([newRecord]);
-        _result = 'Write Successful';
-
-      } else {
-
-      }
-    } catch (e) {
-
-    } finally {
-      await FlutterNfcKit.finish();
+      return AppConstants.errorNFC;
     }
   }
 
-  void close(){
-    FlutterNfcKit.finish();
+  @override
+  Future writeUriData(String url) async {
+    if (await _NFCAvailability()) {
+      ndef.UriRecord newRecord = ndef.UriRecord(
+        prefix: 'https://',
+        content: url,
+      );
+      await FlutterNfcKit.writeNDEFRecords([newRecord]);
+      return AppConstants.writingUsingNFCSuccessfully;
+    } else {
+      return AppConstants.NFCNotSupported;
+    }
   }
 }
